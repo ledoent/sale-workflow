@@ -23,7 +23,12 @@ class TestSaleOrderType(BaseCommon):
         cls.account = cls.account_model.create(
             {"code": "income", "name": "Income", "account_type": "income"}
         )
-        cls.partner = cls.env.ref("base.res_partner_1")
+        # Don't rely on the `base.res_partner_1` demo record — it's absent
+        # when --without-demo is set, so setUpClass errors before any
+        # assertion runs. Create the partner explicitly instead.
+        cls.partner = cls.env["res.partner"].create(
+            {"name": "Test Partner", "is_company": True}
+        )
         cls.partner_child_1 = cls.env["res.partner"].create(
             {"name": "Test child", "parent_id": cls.partner.id, "sale_type": False}
         )
@@ -111,13 +116,17 @@ class TestSaleOrderType(BaseCommon):
                         {
                             "name": "SO -> Customer",
                             "action": "pull",
-                            "picking_type_id": cls.env.ref("stock.picking_type_in").id,
-                            "location_src_id": cls.env.ref(
-                                "stock.stock_location_components"
-                            ).id,
-                            "location_dest_id": cls.env.ref(
-                                "stock.stock_location_customers"
-                            ).id,
+                            "picking_type_id": cls.env["stock.picking.type"]
+                            .search([("code", "=", "incoming")], limit=1)
+                            .id,
+                            # Don't rely on demo-only locations; pick any
+                            # internal+customer location available.
+                            "location_src_id": cls.env["stock.location"]
+                            .search([("usage", "=", "internal")], limit=1)
+                            .id,
+                            "location_dest_id": cls.env["stock.location"]
+                            .search([("usage", "=", "customer")], limit=1)
+                            .id,
                         },
                     )
                 ],
