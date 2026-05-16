@@ -10,13 +10,15 @@
                 <field name="sale_type" />
             </group>
             <field name="property_product_pricelist" position="after">
+                <field name="effective_precedence" invisible="1" />
+                <!-- type_first: type pricelist replaces the partner one on new SOs -->
                 <div
-                    name="pricelists_mismatch"
+                    name="pricelists_mismatch_type_first"
                     groups="product.group_product_pricelist"
                     colspan="2"
                     class="alert alert-warning"
                     role="alert"
-                    invisible="not is_company or parent_id or not effective_pricelist_id or effective_pricelist_id == property_product_pricelist"
+                    invisible="not is_company or parent_id or not effective_pricelist_id or effective_pricelist_id == property_product_pricelist or effective_precedence != 'type_first'"
                 >
                     <p>
                         When creating a Sales Order, above pricelist will be replaced by the one set on the sales order type:
@@ -25,6 +27,40 @@
                         class="oe_inline"
                         nolabel="1"
                     />
+                    </p>
+                </div>
+                <!-- partner_first: partner pricelist wins; sale_type pricelist is informational -->
+                <div
+                    name="pricelists_mismatch_partner_first"
+                    groups="product.group_product_pricelist"
+                    colspan="2"
+                    class="alert alert-info"
+                    role="alert"
+                    invisible="not is_company or parent_id or not effective_pricelist_id or effective_pricelist_id == property_product_pricelist or effective_precedence != 'partner_first'"
+                >
+                    <p>
+                        The above partner pricelist will be used. The sale order type also defines a pricelist (<field
+                        name="effective_pricelist_id"
+                        class="oe_inline"
+                        nolabel="1"
+                    />); it will only apply where the partner has no value.
+                    </p>
+                </div>
+                <!-- partner_only: sale_type pricelist is shown for reference but never applied -->
+                <div
+                    name="pricelists_mismatch_partner_only"
+                    groups="product.group_product_pricelist"
+                    colspan="2"
+                    class="alert alert-secondary"
+                    role="alert"
+                    invisible="not is_company or parent_id or not effective_pricelist_id or effective_pricelist_id == property_product_pricelist or effective_precedence != 'partner_only'"
+                >
+                    <p>
+                        The sale order type for this partner is configured to ignore its own fields when creating sales orders. Its pricelist (<field
+                        name="effective_pricelist_id"
+                        class="oe_inline"
+                        nolabel="1"
+                    />) is shown here for reference only.
                     </p>
                 </div>
             </field>

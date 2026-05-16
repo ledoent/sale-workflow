@@ -14,6 +14,14 @@
                 >
                     <field name="sale_order_type_required" />
                 </setting>
+                <setting
+                    id="sale_order_type_default_precedence"
+                    company_dependent="1"
+                    string="Default precedence for new Sale Order Types"
+                    help="Default conflict-resolution mode applied to newly-created sale order types. Each individual type can override this in developer mode."
+                >
+                    <field name="sale_order_type_default_precedence" widget="radio" />
+                </setting>
             </setting>
         </field>
     </record>

@@ -11,6 +11,20 @@
                     required="order_type_required"
                     readonly="state in ['sale', 'cancel'] or locked"
                 />
+                <field name="type_precedence" invisible="1" />
+                <div
+                    name="sot_precedence_hint"
+                    colspan="2"
+                    class="text-muted small"
+                    invisible="not type_id or type_precedence == 'type_first'"
+                >
+                    <span invisible="type_precedence != 'partner_first'">
+                        Pricelist / payment term / warehouse from the partner take precedence over this type's values; the type only fills gaps.
+                    </span>
+                    <span invisible="type_precedence != 'partner_only'">
+                        This type's pricelist / payment term / warehouse are ignored when computing sales-order fields — the type is a labeling construct only.
+                    </span>
+                </div>
             </field>
         </field>
     </record>

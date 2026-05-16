@@ -40,14 +40,48 @@ add a partner to a sales order it will get the related info to it.
 
 Additionally, it adds a warning message to notify users when there is a
 mismatch between the partner's default pricelist and the effective
-pricelist set by the sales order type. This ensures clarity when
-creating sales orders, as the effective pricelist (determined by the
-sales order type) will take precedence over the partner's default
-pricelist. The warning is only visible for companies without a parent
-and when there is a mismatch between the two pricelists.
+pricelist set by the sales order type. The warning text adapts to the
+type's configured precedence mode (see below) so that the user knows
+which value will actually be applied on new sales orders. The warning is
+only visible for companies without a parent and when there is a mismatch
+between the two pricelists.
 
-.. image:: https://raw.githubusercontent.com/OCA/sale-workflow/18.0/sale_order_type/static/description/pricelist_conflict_warning_note.png
-   :alt: Pricelist Conflict Warning Note
+|Pricelist Conflict Warning Note|
+
+Precedence modes (per sale.order.type)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each ``sale.order.type`` declares how its propagated fields interact
+with the partner's defaults. The setting is exposed in developer mode on
+the type form (Sales > Configuration > Sales Order Types > *type* >
+Precedence) and applies uniformly to the pricelist, payment term,
+warehouse, shipping policy, incoterm, route and invoice journal.
+
+- **Sale type wins** (``type_first``, default): the type's value
+  overrides whatever the partner derives. This is the legacy behavior
+  that has existed in this module since it was first published.
+- **Partner wins; type fills gaps** (``partner_first``): the partner's
+  value is used; the type's value only applies when the partner has no
+  value for that field. Use this for customers who maintain
+  authoritative partner-level defaults and treat sale order types
+  primarily as labeling / reporting / sequence-numbering devices.
+- **Ignore type for propagation** (``partner_only``): the type's
+  pricelist / payment term / warehouse etc. are never pushed onto the
+  sales order. The type record remains useful for grouping, filtering,
+  sequences and the per-type invoice journal logic, but its other fields
+  are decorative. Use this when you want a sale order type purely as a
+  reporting axis.
+
+A company-wide default is configurable in *Settings → Sales* and is
+applied when new types are created. Changing the default does not modify
+existing types; their precedence is preserved.
+
+Manual edits on a sale order are preserved across recomputes: once a
+user sets the pricelist (or payment term, etc.) directly on a SO, the
+value will not be overwritten unless ``type_id`` or ``partner_id``
+actually changes.
+
+.. |Pricelist Conflict Warning Note| image:: https://raw.githubusercontent.com/OCA/sale-workflow/18.0/sale_order_type/static/description/pricelist_conflict_warning_note.png
 
 **Table of contents**
 
@@ -60,16 +94,39 @@ Configuration
 To configure Sale Order Types you need to:
 
 1. Go to **Sales > Configuration > Sales Orders Types**
-2. Create a new sale order type with all the settings you want
+
+2. Create a new sale order type with all the settings you want.
+
+3. *(Optional, developer mode only)* on each type, set the *Precedence*
+   field to control how its own pricelist / payment term / warehouse /
+   etc. interact with the partner's defaults when a sales order is
+   created:
+
+   - ``Sale type wins`` — legacy behavior; the type overrides whatever
+     the partner derives.
+   - ``Partner wins; type fills gaps`` — the partner's value is used;
+     the type only fills fields the partner leaves empty.
+   - ``Ignore type for propagation`` — the type's fields are never
+     applied to new sales orders; the type acts as a label only.
+
+   The default for newly-created types is set in *Settings > Sales >
+   Quotations & Orders > Default precedence for new Sale Order Types*.
+   Existing types keep their current value when this default changes —
+   upgrading the module preserves legacy behavior (``Sale type wins``)
+   for any type that hasn't been touched.
 
 Usage
 =====
 
 1. Go to **Sales > Sales Orders** and create a new sale order. Select
    the new type you have created before and all settings will be
-   propagated.
+   propagated. How they're propagated depends on the type's *Precedence*
+   setting (see CONFIGURE).
 2. You can also define a type for a particular partner if you go to
    *Sales & Purchases* and set a sale order type.
+3. When the type's precedence differs from the legacy ``Sale type wins``
+   mode, a small caption appears under the SO's pricelist explaining
+   what behavior to expect.
 
 Bug Tracker
 ===========
@@ -96,50 +153,50 @@ Authors
 Contributors
 ------------
 
--  `Vermon <http://www.grupovermon.com>`__
+- `Vermon <http://www.grupovermon.com>`__
 
-   -  Carlos Sánchez Cifuentes <csanchez@grupovermon.com>
+  - Carlos Sánchez Cifuentes <csanchez@grupovermon.com>
 
--  `AvanzOsc <http://avanzosc.es>`__
+- `AvanzOsc <http://avanzosc.es>`__
 
-   -  Oihane Crucelaegui <oihanecrucelaegi@avanzosc.es>
-   -  Ana Juaristi <anajuaristi@avanzosc.es>
-   -  Daniel Campos <danielcampos@avanzosc.es>
-   -  Ainara Galdona <ainaragaldona@avanzosc.es>
+  - Oihane Crucelaegui <oihanecrucelaegi@avanzosc.es>
+  - Ana Juaristi <anajuaristi@avanzosc.es>
+  - Daniel Campos <danielcampos@avanzosc.es>
+  - Ainara Galdona <ainaragaldona@avanzosc.es>
 
--  `Agile Business Group <https://www.agilebg.com>`__
+- `Agile Business Group <https://www.agilebg.com>`__
 
-   -  Lorenzo Battistini <lorenzo.battistini@agilebg.com>
+  - Lorenzo Battistini <lorenzo.battistini@agilebg.com>
 
--  `Niboo <https://www.niboo.be/>`__
+- `Niboo <https://www.niboo.be/>`__
 
-   -  Samuel Lefever <sam@niboo.be>
-   -  Pierre Faniel <pierre@niboo.be>
+  - Samuel Lefever <sam@niboo.be>
+  - Pierre Faniel <pierre@niboo.be>
 
--  `Tecnativa <https://www.tecnativa.com>`__
+- `Tecnativa <https://www.tecnativa.com>`__
 
-   -  Pedro M. Baeza
-   -  David Vidal
-   -  Carlos Dauden
-   -  Sergio Teruel
+  - Pedro M. Baeza
+  - David Vidal
+  - Carlos Dauden
+  - Sergio Teruel
 
--  `Pesol <https://www.pesol.es>`__
+- `Pesol <https://www.pesol.es>`__
 
-   -  Angel Moya Pardo <angel.moya@pesol.es>
-   -  Antonio J Rubio Lorente <antonio.rubio@pesol.es>
+  - Angel Moya Pardo <angel.moya@pesol.es>
+  - Antonio J Rubio Lorente <antonio.rubio@pesol.es>
 
--  Rattapong Chokmasermkul <rattapongc@ecosoft.co.th>
--  `Druidoo <https://www.druidoo.io>`__
+- Rattapong Chokmasermkul <rattapongc@ecosoft.co.th>
+- `Druidoo <https://www.druidoo.io>`__
 
-   -  Iván Todorovich <ivan.todorovich@druidoo.io>
+  - Iván Todorovich <ivan.todorovich@druidoo.io>
 
--  `GSLab.it <https://www.gslab.it>`__
+- `GSLab.it <https://www.gslab.it>`__
 
-   -  Giovanni Serra <giovanni@gslab.it>
+  - Giovanni Serra <giovanni@gslab.it>
 
--  Tharathip Chaweewongphan <tharathipc@ecosoft.co.th>
--  Isaac Gallart <igallart@puntsistemes.es>
--  Denis Rousse <denis.roussel@acsone.eu>
+- Tharathip Chaweewongphan <tharathipc@ecosoft.co.th>
+- Isaac Gallart <igallart@puntsistemes.es>
+- Denis Rousse <denis.roussel@acsone.eu>
 
 Do not contact contributors directly about support or help with
 technical issues.

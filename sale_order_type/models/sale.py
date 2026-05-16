@@ -22,6 +22,11 @@ class SaleOrder(models.Model):
         check_company=True,
     )
     order_type_required = fields.Boolean(related="company_id.sale_order_type_required")
+    type_precedence = fields.Selection(
+        related="type_id.precedence",
+        help="The active precedence mode of this order's type — exposed for "
+        "view-level hints, not user-editable here.",
+    )
     # Fields converted to computed writable
     picking_policy = fields.Selection(
         compute="_compute_picking_policy", store=True, readonly=False
@@ -50,6 +55,21 @@ class SaleOrder(models.Model):
             limit=1,
         )
 
+    def _sot_resolve(self, type_value, current_value):
+        """Apply the active precedence mode of this order's `type_id`.
+
+        Returns the value that the caller (a `_compute_*` body) should write
+        to the order's field. `current_value` is whatever `super()` already
+        set (usually the partner-derived default).
+        """
+        mode = self.type_id.precedence or "type_first"
+        if mode == "partner_only":
+            return current_value
+        if mode == "partner_first":
+            return current_value or type_value
+        # type_first (legacy)
+        return type_value or current_value
+
     @api.depends("partner_id", "company_id")
     @api.depends_context("partner_id", "company_id", "company")
     def _compute_sale_type_id(self):
@@ -73,9 +93,9 @@ class SaleOrder(models.Model):
     def _compute_warehouse_id(self):
         res = super()._compute_warehouse_id()
         for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.warehouse_id:
-                order.warehouse_id = order_type.warehouse_id
+            order.warehouse_id = order._sot_resolve(
+                order.type_id.warehouse_id, order.warehouse_id
+            )
         return res
 
     def _depends_picking_policy(self):
@@ -91,27 +111,27 @@ class SaleOrder(models.Model):
         if hasattr(super(), "_compute_picking_policy"):
             res = super()._compute_picking_policy()
         for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.picking_policy:
-                order.picking_policy = order_type.picking_policy
+            order.picking_policy = order._sot_resolve(
+                order.type_id.picking_policy, order.picking_policy
+            )
         return res
 
     @api.depends("type_id")
     def _compute_payment_term_id(self):
         res = super()._compute_payment_term_id()
         for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.payment_term_id:
-                order.payment_term_id = order_type.payment_term_id
+            order.payment_term_id = order._sot_resolve(
+                order.type_id.payment_term_id, order.payment_term_id
+            )
         return res
 
     @api.depends("type_id")
     def _compute_pricelist_id(self):
         res = super()._compute_pricelist_id()
         for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.pricelist_id:
-                order.pricelist_id = order_type.pricelist_id
+            order.pricelist_id = order._sot_resolve(
+                order.type_id.pricelist_id, order.pricelist_id
+            )
         return res
 
     @api.depends("type_id")
@@ -120,9 +140,9 @@ class SaleOrder(models.Model):
         if hasattr(super(), "_compute_incoterm"):
             res = super()._compute_incoterm()
         for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.incoterm_id:
-                order.incoterm = order_type.incoterm_id
+            order.incoterm = order._sot_resolve(
+                order.type_id.incoterm_id, order.incoterm
+            )
         return res
 
     @api.depends("type_id")
@@ -179,7 +199,15 @@ class SaleOrder(models.Model):
 
     def _prepare_invoice(self):
         res = super()._prepare_invoice()
-        if self.type_id.journal_id:
+        # Journal:
+        # - `type_first`: legacy — type's journal overrides super's choice.
+        # - `partner_first` / `partner_only`: leave whatever super chose.
+        # We don't use `_sot_resolve` here: super() may leave `journal_id`
+        # implicit (the account.move._get_default_journal logic fills it),
+        # so a three-way merge would spuriously fall back to the type's
+        # journal in non-type_first modes.
+        mode = self.type_id.precedence or "type_first"
+        if mode == "type_first" and self.type_id.journal_id:
             res["journal_id"] = self.type_id.journal_id.id
         if self.type_id:
             res["sale_type_id"] = self.type_id.id
@@ -197,7 +225,7 @@ class SaleOrderLine(models.Model):
         if hasattr(super(), "_compute_route_id"):
             res = super()._compute_route_id()
         for line in self.filtered("order_id.type_id"):
-            order_type = line.order_id.type_id
-            if order_type.route_id:
-                line.route_id = order_type.route_id
+            line.route_id = line.order_id._sot_resolve(
+                line.order_id.type_id.route_id, line.route_id
+            )
         return res

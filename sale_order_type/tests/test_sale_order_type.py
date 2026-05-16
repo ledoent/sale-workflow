@@ -5,7 +5,7 @@
 from freezegun import freeze_time
 
 from odoo import fields
-from odoo.tests import Form
+from odoo.tests import Form, tagged
 
 from odoo.addons.base.tests.common import BaseCommon
 
@@ -361,3 +361,267 @@ class TestSaleOrderType(BaseCommon):
             "not use partner's default sale type "
             f"(partner has: {sale_order.partner_id.sale_type.name})",
         )
+
+
+@tagged("post_install", "-at_install")
+class TestPrecedence(BaseCommon):
+    """Cover the three precedence modes on `sale.order.type`.
+
+    Strategy: unit-test the resolver helper directly with synthetic
+    inputs, then a handful of full-flow integration tests for the
+    cases we can drive without fighting Odoo's per-company property
+    field plumbing.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.partner = cls.env["res.partner"].create(
+            {
+                "name": "Precedence Test Partner",
+                "is_company": True,
+                "country_id": cls.env.ref("base.us").id,
+            }
+        )
+        cls.pl_partner = cls.env["product.pricelist"].create(
+            {"name": "Partner Pricelist", "company_id": False}
+        )
+        cls.pl_type = cls.env["product.pricelist"].create(
+            {"name": "Type Pricelist", "company_id": False}
+        )
+        cls.pt_type = cls.env["account.payment.term"].create(
+            {"name": "Type Payment Term"}
+        )
+        cls.wh_type = cls.env["stock.warehouse"].create(
+            {"name": "Type Warehouse", "code": "TYP"}
+        )
+        cls.inc_type = cls.env.ref("account.incoterm_EXW")
+        cls.route_type = cls.env["stock.route"].create(
+            {"name": "Type Route", "sale_selectable": True}
+        )
+        cls.journal_type = cls.env["account.journal"].create(
+            {"name": "Type Journal", "type": "sale", "code": "TYPJ"}
+        )
+
+        cls.type_full = cls.env["sale.order.type"].create(
+            {
+                "name": "Full Type",
+                "pricelist_id": cls.pl_type.id,
+                "payment_term_id": cls.pt_type.id,
+                "warehouse_id": cls.wh_type.id,
+                "picking_policy": "one",
+                "incoterm_id": cls.inc_type.id,
+                "route_id": cls.route_type.id,
+                "journal_id": cls.journal_type.id,
+            }
+        )
+        cls.product = cls.env["product.product"].create(
+            {"type": "service", "invoice_policy": "order", "name": "P"}
+        )
+
+    def _set_mode(self, mode):
+        self.type_full.precedence = mode
+
+    def _new_so(self):
+        f = Form(self.env["sale.order"])
+        f.partner_id = self.partner
+        f.type_id = self.type_full
+        with f.order_line.new() as line:
+            line.product_id = self.product
+            line.product_uom_qty = 1.0
+        return f.save()
+
+    # ----- _sot_resolve helper (unit) ----------------------------------
+
+    def test_sot_resolve_type_first_picks_type(self):
+        self._set_mode("type_first")
+        order = self.env["sale.order"].new({"type_id": self.type_full.id})
+        self.assertEqual(order._sot_resolve("type-val", "current-val"), "type-val")
+
+    def test_sot_resolve_type_first_falls_back_to_current(self):
+        """type_first: when type is empty, keep super's value."""
+        self._set_mode("type_first")
+        order = self.env["sale.order"].new({"type_id": self.type_full.id})
+        self.assertEqual(order._sot_resolve(False, "current-val"), "current-val")
+
+    def test_sot_resolve_partner_first_picks_current(self):
+        self._set_mode("partner_first")
+        order = self.env["sale.order"].new({"type_id": self.type_full.id})
+        self.assertEqual(order._sot_resolve("type-val", "current-val"), "current-val")
+
+    def test_sot_resolve_partner_first_fills_gap_with_type(self):
+        self._set_mode("partner_first")
+        order = self.env["sale.order"].new({"type_id": self.type_full.id})
+        self.assertEqual(order._sot_resolve("type-val", False), "type-val")
+
+    def test_sot_resolve_partner_only_ignores_type(self):
+        self._set_mode("partner_only")
+        order = self.env["sale.order"].new({"type_id": self.type_full.id})
+        self.assertEqual(order._sot_resolve("type-val", "current-val"), "current-val")
+
+    def test_sot_resolve_partner_only_leaves_empty(self):
+        self._set_mode("partner_only")
+        order = self.env["sale.order"].new({"type_id": self.type_full.id})
+        self.assertFalse(order._sot_resolve("type-val", False))
+
+    # ----- integration: type_first end-to-end ---------------------------
+
+    def test_type_first_pricelist(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        self.assertEqual(order.pricelist_id, self.pl_type)
+
+    def test_type_first_payment_term(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        self.assertEqual(order.payment_term_id, self.pt_type)
+
+    def test_type_first_warehouse(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        self.assertEqual(order.warehouse_id, self.wh_type)
+
+    def test_type_first_picking_policy(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        self.assertEqual(order.picking_policy, "one")
+
+    def test_type_first_incoterm(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        self.assertEqual(order.incoterm, self.inc_type)
+
+    def test_type_first_route(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        self.assertEqual(order.order_line.route_id, self.route_type)
+
+    def test_type_first_invoice_journal(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        self.assertEqual(order._prepare_invoice()["journal_id"], self.journal_type.id)
+
+    # ----- integration: partner_only end-to-end -------------------------
+    # (No need for partner.property_product_pricelist setup — the test
+    # asserts that the type's value is NOT propagated regardless of
+    # partner state.)
+
+    def test_partner_only_no_invoice_journal_override(self):
+        self._set_mode("partner_only")
+        order = self._new_so()
+        self.assertNotEqual(
+            order._prepare_invoice().get("journal_id"), self.journal_type.id
+        )
+
+    def test_partner_only_warehouse_not_propagated(self):
+        self._set_mode("partner_only")
+        order = self._new_so()
+        # Whatever warehouse super() chose, it should not be the type's.
+        self.assertNotEqual(order.warehouse_id, self.wh_type)
+
+    def test_partner_only_picking_policy_not_propagated(self):
+        self._set_mode("partner_only")
+        order = self._new_so()
+        # Default picking_policy is 'direct'; type carries 'one'.
+        self.assertEqual(order.picking_policy, "direct")
+
+    def test_partner_only_incoterm_not_propagated(self):
+        self._set_mode("partner_only")
+        order = self._new_so()
+        self.assertFalse(order.incoterm)
+
+    def test_partner_only_route_not_propagated(self):
+        self._set_mode("partner_only")
+        order = self._new_so()
+        self.assertFalse(order.order_line.route_id)
+
+    # ----- cross-cutting ------------------------------------------------
+
+    def test_per_type_precedence_independent(self):
+        """Two types with different precedence yield different SO results.
+        Asserts on warehouse_id which is reliably propagated without
+        needing partner-property setup.
+        """
+        other_type = self.type_full.copy(
+            {"name": "Partner-only Twin", "precedence": "partner_only"}
+        )
+        self.type_full.precedence = "type_first"
+
+        f1 = Form(self.env["sale.order"])
+        f1.partner_id = self.partner
+        f1.type_id = self.type_full
+        with f1.order_line.new() as line:
+            line.product_id = self.product
+        so1 = f1.save()
+        self.assertEqual(so1.warehouse_id, self.wh_type)
+
+        f2 = Form(self.env["sale.order"])
+        f2.partner_id = self.partner
+        f2.type_id = other_type
+        with f2.order_line.new() as line:
+            line.product_id = self.product
+        so2 = f2.save()
+        self.assertNotEqual(so2.warehouse_id, self.wh_type)
+
+    def test_new_type_inherits_company_default(self):
+        self.env.company.sale_order_type_default_precedence = "partner_first"
+        new_type = self.env["sale.order.type"].create({"name": "Inheritor"})
+        self.assertEqual(new_type.precedence, "partner_first")
+        # Reset for downstream tests.
+        self.env.company.sale_order_type_default_precedence = "type_first"
+
+    def test_existing_default_type_is_type_first(self):
+        """The seed `default_type` ships with type_first to preserve behavior."""
+        default_type = self.env.ref(
+            "sale_order_type.default_type", raise_if_not_found=False
+        )
+        if default_type:
+            self.assertEqual(default_type.precedence, "type_first")
+
+    def test_manual_pricelist_edit_preserved_after_unrelated_write(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        order.pricelist_id = self.pl_partner
+        order.note = "Some unrelated edit"
+        self.assertEqual(order.pricelist_id, self.pl_partner)
+
+    def test_manual_pricelist_edit_overridden_on_type_change(self):
+        self._set_mode("type_first")
+        order = self._new_so()
+        order.pricelist_id = self.pl_partner
+        other_type = self.type_full.copy(
+            {"name": "Trigger", "precedence": "type_first"}
+        )
+        order.type_id = other_type
+        self.assertEqual(order.pricelist_id, self.pl_type)
+
+    # ----- effective_* related fields on res.partner -------------------
+
+    def test_effective_pricelist_id_related(self):
+        self.partner.sale_type = self.type_full
+        self.assertEqual(self.partner.effective_pricelist_id, self.pl_type)
+
+    def test_effective_payment_term_id_related(self):
+        self.partner.sale_type = self.type_full
+        self.assertEqual(self.partner.effective_payment_term_id, self.pt_type)
+
+    def test_effective_warehouse_id_related(self):
+        self.partner.sale_type = self.type_full
+        self.assertEqual(self.partner.effective_warehouse_id, self.wh_type)
+
+    def test_effective_incoterm_id_related(self):
+        self.partner.sale_type = self.type_full
+        self.assertEqual(self.partner.effective_incoterm_id, self.inc_type)
+
+    def test_effective_route_id_related(self):
+        self.partner.sale_type = self.type_full
+        self.assertEqual(self.partner.effective_route_id, self.route_type)
+
+    def test_effective_journal_id_related(self):
+        self.partner.sale_type = self.type_full
+        self.assertEqual(self.partner.effective_journal_id, self.journal_type)
+
+    def test_effective_precedence_related(self):
+        self.partner.sale_type = self.type_full
+        self.type_full.precedence = "partner_first"
+        self.assertEqual(self.partner.effective_precedence, "partner_first")
