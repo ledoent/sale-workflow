@@ -34,5 +34,21 @@ uniformly to the pricelist, payment term, warehouse, shipping policy, incoterm, 
 A company-wide default is configurable in *Settings → Sales* and is applied when new types are created. Changing the
 default does not modify existing types; their precedence is preserved.
 
-Manual edits on a sale order are preserved across recomputes: once a user sets the pricelist (or payment term, etc.)
-directly on a SO, the value will not be overwritten unless `type_id` or `partner_id` actually changes.
+Manual edits on a sale order are preserved across recomputes by trigger
+narrowing: once a user sets the pricelist (or payment term, etc.)
+directly on a SO, the value will not be overwritten unless `type_id` or
+`partner_id` actually changes. A `type_id` change *does* re-fire the
+type's value in `type_first` mode — this is the documented legacy
+behavior and matches user expectations for an explicit type change.
+
+For stricter dirty-state preservation (preserve user edits even on a
+type change, with a Salesforce/SAP-style badge to surface "this value
+is anchored by the user"), install the companion module
+`web_field_provenance` when it's available
+(see Huly OCA-23 / ledoent initiative). This module's
+`record._user_set(fname)` API is consulted automatically by
+`sale.order._sot_resolve` — when installed and the user has manually
+set a field, the precedence rules are bypassed and the manual value
+wins regardless of mode. The integration is a soft dependency: this
+module works standalone and behaves identically when
+`web_field_provenance` is not installed.

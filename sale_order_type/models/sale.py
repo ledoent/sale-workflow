@@ -2,9 +2,12 @@
 # Copyright 2023 Tecnativa - Sergio Teruel
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
+import logging
 from datetime import datetime, timedelta
 
 from odoo import _, api, fields, models
+
+_logger = logging.getLogger(__name__)
 
 
 class SaleOrder(models.Model):
@@ -55,13 +58,29 @@ class SaleOrder(models.Model):
             limit=1,
         )
 
-    def _sot_resolve(self, type_value, current_value):
+    def _sot_resolve(self, type_value, current_value, fname=None):
         """Apply the active precedence mode of this order's `type_id`.
 
         Returns the value that the caller (a `_compute_*` body) should write
         to the order's field. `current_value` is whatever `super()` already
         set (usually the partner-derived default).
+
+        `fname` (optional) — the name of the field being resolved. When the
+        `web_field_provenance` module (Huly OCA-23) is installed and the
+        user has manually edited this field on the order, the manual value
+        is preserved regardless of precedence mode. This integration is a
+        soft dependency: `_user_set` is only consulted if `record._user_set`
+        exists, so installs without the provenance module behave exactly
+        as before.
         """
+        if fname and hasattr(self, "_user_set"):
+            try:
+                if self._user_set(fname):
+                    return current_value
+            except Exception as exc:
+                # Provenance lookup must never break the compute; fall
+                # through to the regular precedence resolution.
+                _logger.debug("_user_set lookup failed for %s: %s", fname, exc)
         mode = self.type_id.precedence or "type_first"
         if mode == "partner_only":
             return current_value
@@ -94,7 +113,7 @@ class SaleOrder(models.Model):
         res = super()._compute_warehouse_id()
         for order in self.filtered("type_id"):
             order.warehouse_id = order._sot_resolve(
-                order.type_id.warehouse_id, order.warehouse_id
+                order.type_id.warehouse_id, order.warehouse_id, "warehouse_id"
             )
         return res
 
@@ -112,7 +131,7 @@ class SaleOrder(models.Model):
             res = super()._compute_picking_policy()
         for order in self.filtered("type_id"):
             order.picking_policy = order._sot_resolve(
-                order.type_id.picking_policy, order.picking_policy
+                order.type_id.picking_policy, order.picking_policy, "picking_policy"
             )
         return res
 
@@ -121,7 +140,9 @@ class SaleOrder(models.Model):
         res = super()._compute_payment_term_id()
         for order in self.filtered("type_id"):
             order.payment_term_id = order._sot_resolve(
-                order.type_id.payment_term_id, order.payment_term_id
+                order.type_id.payment_term_id,
+                order.payment_term_id,
+                "payment_term_id",
             )
         return res
 
@@ -130,7 +151,7 @@ class SaleOrder(models.Model):
         res = super()._compute_pricelist_id()
         for order in self.filtered("type_id"):
             order.pricelist_id = order._sot_resolve(
-                order.type_id.pricelist_id, order.pricelist_id
+                order.type_id.pricelist_id, order.pricelist_id, "pricelist_id"
             )
         return res
 
@@ -141,7 +162,7 @@ class SaleOrder(models.Model):
             res = super()._compute_incoterm()
         for order in self.filtered("type_id"):
             order.incoterm = order._sot_resolve(
-                order.type_id.incoterm_id, order.incoterm
+                order.type_id.incoterm_id, order.incoterm, "incoterm"
             )
         return res
 
@@ -226,6 +247,6 @@ class SaleOrderLine(models.Model):
             res = super()._compute_route_id()
         for line in self.filtered("order_id.type_id"):
             line.route_id = line.order_id._sot_resolve(
-                line.order_id.type_id.route_id, line.route_id
+                line.order_id.type_id.route_id, line.route_id, "route_id"
             )
         return res

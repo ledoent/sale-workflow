@@ -411,10 +411,22 @@ reporting axis.</li>
 <p>A company-wide default is configurable in <em>Settings → Sales</em> and is
 applied when new types are created. Changing the default does not modify
 existing types; their precedence is preserved.</p>
-<p>Manual edits on a sale order are preserved across recomputes: once a
-user sets the pricelist (or payment term, etc.) directly on a SO, the
-value will not be overwritten unless <tt class="docutils literal">type_id</tt> or <tt class="docutils literal">partner_id</tt>
-actually changes.</p>
+<p>Manual edits on a sale order are preserved across recomputes by trigger
+narrowing: once a user sets the pricelist (or payment term, etc.)
+directly on a SO, the value will not be overwritten unless <tt class="docutils literal">type_id</tt>
+or <tt class="docutils literal">partner_id</tt> actually changes. A <tt class="docutils literal">type_id</tt> change <em>does</em> re-fire
+the type’s value in <tt class="docutils literal">type_first</tt> mode — this is the documented legacy
+behavior and matches user expectations for an explicit type change.</p>
+<p>For stricter dirty-state preservation (preserve user edits even on a
+type change, with a Salesforce/SAP-style badge to surface “this value is
+anchored by the user”), install the companion module
+<tt class="docutils literal">web_field_provenance</tt> when it’s available (see Huly OCA-23 / ledoent
+initiative). This module’s <tt class="docutils literal">record._user_set(fname)</tt> API is consulted
+automatically by <tt class="docutils literal">sale.order._sot_resolve</tt> — when installed and the
+user has manually set a field, the precedence rules are bypassed and the
+manual value wins regardless of mode. The integration is a soft
+dependency: this module works standalone and behaves identically when
+<tt class="docutils literal">web_field_provenance</tt> is not installed.</p>
 <p><strong>Table of contents</strong></p>
 <div class="contents local topic" id="contents">
 <ul class="simple">
