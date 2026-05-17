@@ -89,6 +89,31 @@ class SaleOrder(models.Model):
         # type_first (legacy)
         return type_value or current_value
 
+    def _sot_stamp_cascade_if_available(self, fname, value, type_value):
+        """Stamp `fname` as rule-derived when the resolved value came from
+        the type (not the partner default).
+
+        Soft-dependency on the `web_field_provenance` module (Huly OCA-23):
+        if `_stamp_provenance` is present on the record, attribute the
+        cascade write so the OWL badge shows the green-cog icon and the
+        tooltip reads "Set by Sale Order Type cascade". When the module
+        isn't installed this is a silent no-op.
+        """
+        if not value or value != type_value:
+            return
+        if not hasattr(self, "_stamp_provenance"):
+            return
+        try:
+            self._stamp_provenance(
+                [fname],
+                source="r",
+                by="sot.cascade",
+                rule="Sale Order Type cascade",
+            )
+        except Exception as exc:
+            # Provenance stamping must never break the compute.
+            _logger.debug("_stamp_provenance failed for %s: %s", fname, exc)
+
     @api.depends("partner_id", "company_id")
     @api.depends_context("partner_id", "company_id", "company")
     def _compute_sale_type_id(self):
@@ -112,8 +137,12 @@ class SaleOrder(models.Model):
     def _compute_warehouse_id(self):
         res = super()._compute_warehouse_id()
         for order in self.filtered("type_id"):
+            type_value = order.type_id.warehouse_id
             order.warehouse_id = order._sot_resolve(
-                order.type_id.warehouse_id, order.warehouse_id, "warehouse_id"
+                type_value, order.warehouse_id, "warehouse_id"
+            )
+            order._sot_stamp_cascade_if_available(
+                "warehouse_id", order.warehouse_id, type_value
             )
         return res
 
@@ -130,8 +159,12 @@ class SaleOrder(models.Model):
         if hasattr(super(), "_compute_picking_policy"):
             res = super()._compute_picking_policy()
         for order in self.filtered("type_id"):
+            type_value = order.type_id.picking_policy
             order.picking_policy = order._sot_resolve(
-                order.type_id.picking_policy, order.picking_policy, "picking_policy"
+                type_value, order.picking_policy, "picking_policy"
+            )
+            order._sot_stamp_cascade_if_available(
+                "picking_policy", order.picking_policy, type_value
             )
         return res
 
@@ -139,10 +172,12 @@ class SaleOrder(models.Model):
     def _compute_payment_term_id(self):
         res = super()._compute_payment_term_id()
         for order in self.filtered("type_id"):
+            type_value = order.type_id.payment_term_id
             order.payment_term_id = order._sot_resolve(
-                order.type_id.payment_term_id,
-                order.payment_term_id,
-                "payment_term_id",
+                type_value, order.payment_term_id, "payment_term_id"
+            )
+            order._sot_stamp_cascade_if_available(
+                "payment_term_id", order.payment_term_id, type_value
             )
         return res
 
@@ -150,8 +185,12 @@ class SaleOrder(models.Model):
     def _compute_pricelist_id(self):
         res = super()._compute_pricelist_id()
         for order in self.filtered("type_id"):
+            type_value = order.type_id.pricelist_id
             order.pricelist_id = order._sot_resolve(
-                order.type_id.pricelist_id, order.pricelist_id, "pricelist_id"
+                type_value, order.pricelist_id, "pricelist_id"
+            )
+            order._sot_stamp_cascade_if_available(
+                "pricelist_id", order.pricelist_id, type_value
             )
         return res
 
@@ -161,8 +200,10 @@ class SaleOrder(models.Model):
         if hasattr(super(), "_compute_incoterm"):
             res = super()._compute_incoterm()
         for order in self.filtered("type_id"):
-            order.incoterm = order._sot_resolve(
-                order.type_id.incoterm_id, order.incoterm, "incoterm"
+            type_value = order.type_id.incoterm_id
+            order.incoterm = order._sot_resolve(type_value, order.incoterm, "incoterm")
+            order._sot_stamp_cascade_if_available(
+                "incoterm", order.incoterm, type_value
             )
         return res
 
@@ -240,13 +281,34 @@ class SaleOrderLine(models.Model):
 
     route_id = fields.Many2one(compute="_compute_route_id", store=True, readonly=False)
 
+    def _sot_stamp_cascade_if_available(self, fname, value, type_value):
+        """Mirror of `SaleOrder._sot_stamp_cascade_if_available` for line-
+        level fields (route_id). Same soft-dependency on
+        `web_field_provenance` (Huly OCA-23).
+        """
+        if not value or value != type_value:
+            return
+        if not hasattr(self, "_stamp_provenance"):
+            return
+        try:
+            self._stamp_provenance(
+                [fname],
+                source="r",
+                by="sot.cascade",
+                rule="Sale Order Type cascade",
+            )
+        except Exception as exc:
+            _logger.debug("_stamp_provenance failed for %s: %s", fname, exc)
+
     @api.depends("order_id.type_id")
     def _compute_route_id(self):
         res = None
         if hasattr(super(), "_compute_route_id"):
             res = super()._compute_route_id()
         for line in self.filtered("order_id.type_id"):
+            type_value = line.order_id.type_id.route_id
             line.route_id = line.order_id._sot_resolve(
-                line.order_id.type_id.route_id, line.route_id, "route_id"
+                type_value, line.route_id, "route_id"
             )
+            line._sot_stamp_cascade_if_available("route_id", line.route_id, type_value)
         return res
