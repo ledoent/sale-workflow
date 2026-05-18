@@ -119,14 +119,13 @@ class TestSaleOrderType(BaseCommon):
                             "picking_type_id": cls.env["stock.picking.type"]
                             .search([("code", "=", "incoming")], limit=1)
                             .id,
-                            # Don't rely on demo-only locations; pick any
-                            # internal+customer location available.
-                            "location_src_id": cls.env["stock.location"]
-                            .search([("usage", "=", "internal")], limit=1)
-                            .id,
-                            "location_dest_id": cls.env["stock.location"]
-                            .search([("usage", "=", "customer")], limit=1)
-                            .id,
+                            # Use the test company's warehouse stock as the
+                            # source so _check_company on stock.route accepts
+                            # the rule; customer location is shared (no company).
+                            "location_src_id": cls.warehouse.lot_stock_id.id,
+                            "location_dest_id": cls.env.ref(
+                                "stock.stock_location_customers"
+                            ).id,
                         },
                     )
                 ],
