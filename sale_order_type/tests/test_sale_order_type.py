@@ -117,7 +117,7 @@ class TestSaleOrderType(BaseCommon):
                             "name": "SO -> Customer",
                             "action": "pull",
                             "picking_type_id": cls.env["stock.picking.type"]
-                            .search([("code", "=", "incoming")], limit=1)
+                            .search([("code", "=", "incoming")], order="id", limit=1)
                             .id,
                             # Use the test company's warehouse stock as the
                             # source so _check_company on stock.route accepts
