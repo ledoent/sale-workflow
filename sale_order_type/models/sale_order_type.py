@@ -59,6 +59,27 @@ class SaleOrderTypology(models.Model):
     )
     active = fields.Boolean(default=True)
     quotation_validity_days = fields.Integer(string="Quotation Validity (Days)")
+    precedence = fields.Selection(
+        [
+            ("type_first", "Sale type wins"),
+            ("partner_first", "Partner wins; type fills gaps"),
+            ("partner_only", "Ignore type for propagation"),
+        ],
+        required=True,
+        default=lambda self: (
+            self.env.company.sale_order_type_default_precedence or "type_first"
+        ),
+        help="How this type resolves conflicts between its own pricelist / "
+        "payment_term / warehouse / etc. and the partner's defaults when a "
+        "sale order is created.\n"
+        "- Sale type wins: legacy behavior. The type's value overrides the "
+        "partner's whenever both are set.\n"
+        "- Partner wins; type fills gaps: the partner's default is used; the "
+        "type only fills fields the partner leaves empty.\n"
+        "- Ignore type for propagation: fields on this type are not pushed "
+        "onto sale orders at all; the type is then a labeling / reporting "
+        "construct only.",
+    )
 
     @api.model
     def _get_domain_sequence_id(self):

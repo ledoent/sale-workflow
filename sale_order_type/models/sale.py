@@ -2,9 +2,12 @@
 # Copyright 2023 Tecnativa - Sergio Teruel
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
+import logging
 from datetime import datetime, timedelta
 
 from odoo import _, api, fields, models
+
+_logger = logging.getLogger(__name__)
 
 
 class SaleOrder(models.Model):
@@ -22,6 +25,11 @@ class SaleOrder(models.Model):
         check_company=True,
     )
     order_type_required = fields.Boolean(related="company_id.sale_order_type_required")
+    type_precedence = fields.Selection(
+        related="type_id.precedence",
+        help="The active precedence mode of this order's type — exposed for "
+        "view-level hints, not user-editable here.",
+    )
     # Fields converted to computed writable
     picking_policy = fields.Selection(
         compute="_compute_picking_policy", store=True, readonly=False
@@ -50,6 +58,68 @@ class SaleOrder(models.Model):
             limit=1,
         )
 
+    def _sot_resolve(self, type_value, current_value, fname=None):
+        """Apply the active precedence mode of this order's `type_id`.
+
+        Returns the value that the caller (a `_compute_*` body) should write
+        to the order's field. `current_value` is whatever `super()` already
+        set (usually the partner-derived default).
+
+        `fname` is accepted (and forwarded by callers) for parity with
+        `_sot_stamp_cascade_if_available`, which uses it for badge
+        attribution. The `_user_set` check is NOT done here — by the time
+        we run, `super()` has already overwritten `current_value` with the
+        partner default, so checking `_user_set` against the clobbered
+        value gives the wrong answer. The compute-level filter
+        `_sot_preserve_user_set` (called before `super()`) is the correct
+        place to short-circuit for user-anchored records.
+        """
+        del fname  # kept for caller-side parity / future extension
+        mode = self.type_id.precedence or "type_first"
+        if mode == "partner_only":
+            return current_value
+        if mode == "partner_first":
+            return current_value or type_value
+        # type_first (legacy)
+        return type_value or current_value
+
+    def _sot_stamp_cascade_if_available(self, fname, value, type_value):
+        """Stamp `fname` as rule-derived when the resolved value came from
+        the type (not the partner default).
+
+        Soft-dependency on the `web_field_provenance` module (Huly OCA-23):
+        if `_stamp_provenance` is present on the record, attribute the
+        cascade write so the OWL badge shows the green-cog icon and the
+        tooltip reads "Set by Sale Order Type cascade". When the module
+        isn't installed this is a silent no-op.
+        """
+        if not value or value != type_value:
+            return
+        if not hasattr(self, "_stamp_provenance"):
+            return
+        try:
+            self._stamp_provenance(
+                [fname],
+                source="r",
+                by="sot.cascade",
+                rule="Sale Order Type cascade",
+            )
+        except Exception as exc:
+            # Provenance stamping must never break the compute.
+            _logger.debug("_stamp_provenance failed for %s: %s", fname, exc)
+
+    def _sot_preserve_user_set(self, fname):
+        """Filter `self` down to records whose `fname` has been
+        user-anchored via the `web_field_provenance` module. Compute
+        overrides should exclude these from `super()` so the partner
+        default doesn't overwrite the user's value before we get a
+        chance to short-circuit. Returns an empty recordset when
+        web_field_provenance is not installed — soft dependency.
+        """
+        if not hasattr(self, "_user_set"):
+            return self.browse()
+        return self.filtered(lambda r: r._user_set(fname))
+
     @api.depends("partner_id", "company_id")
     @api.depends_context("partner_id", "company_id", "company")
     def _compute_sale_type_id(self):
@@ -71,11 +141,16 @@ class SaleOrder(models.Model):
 
     @api.depends("type_id")
     def _compute_warehouse_id(self):
-        res = super()._compute_warehouse_id()
-        for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.warehouse_id:
-                order.warehouse_id = order_type.warehouse_id
+        preserved = self._sot_preserve_user_set("warehouse_id")
+        res = super(SaleOrder, self - preserved)._compute_warehouse_id()
+        for order in (self - preserved).filtered("type_id"):
+            type_value = order.type_id.warehouse_id
+            order.warehouse_id = order._sot_resolve(
+                type_value, order.warehouse_id, "warehouse_id"
+            )
+            order._sot_stamp_cascade_if_available(
+                "warehouse_id", order.warehouse_id, type_value
+            )
         return res
 
     def _depends_picking_policy(self):
@@ -87,42 +162,64 @@ class SaleOrder(models.Model):
 
     @api.depends(lambda self: self._depends_picking_policy())
     def _compute_picking_policy(self):
+        preserved = self._sot_preserve_user_set("picking_policy")
+        target = self - preserved
         res = None
-        if hasattr(super(), "_compute_picking_policy"):
-            res = super()._compute_picking_policy()
-        for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.picking_policy:
-                order.picking_policy = order_type.picking_policy
+        if hasattr(super(SaleOrder, target), "_compute_picking_policy"):
+            res = super(SaleOrder, target)._compute_picking_policy()
+        for order in target.filtered("type_id"):
+            type_value = order.type_id.picking_policy
+            order.picking_policy = order._sot_resolve(
+                type_value, order.picking_policy, "picking_policy"
+            )
+            order._sot_stamp_cascade_if_available(
+                "picking_policy", order.picking_policy, type_value
+            )
         return res
 
     @api.depends("type_id")
     def _compute_payment_term_id(self):
-        res = super()._compute_payment_term_id()
-        for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.payment_term_id:
-                order.payment_term_id = order_type.payment_term_id
+        preserved = self._sot_preserve_user_set("payment_term_id")
+        target = self - preserved
+        res = super(SaleOrder, target)._compute_payment_term_id()
+        for order in target.filtered("type_id"):
+            type_value = order.type_id.payment_term_id
+            order.payment_term_id = order._sot_resolve(
+                type_value, order.payment_term_id, "payment_term_id"
+            )
+            order._sot_stamp_cascade_if_available(
+                "payment_term_id", order.payment_term_id, type_value
+            )
         return res
 
     @api.depends("type_id")
     def _compute_pricelist_id(self):
-        res = super()._compute_pricelist_id()
-        for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.pricelist_id:
-                order.pricelist_id = order_type.pricelist_id
+        preserved = self._sot_preserve_user_set("pricelist_id")
+        target = self - preserved
+        res = super(SaleOrder, target)._compute_pricelist_id()
+        for order in target.filtered("type_id"):
+            type_value = order.type_id.pricelist_id
+            order.pricelist_id = order._sot_resolve(
+                type_value, order.pricelist_id, "pricelist_id"
+            )
+            order._sot_stamp_cascade_if_available(
+                "pricelist_id", order.pricelist_id, type_value
+            )
         return res
 
     @api.depends("type_id")
     def _compute_incoterm(self):
+        preserved = self._sot_preserve_user_set("incoterm")
+        target = self - preserved
         res = None
-        if hasattr(super(), "_compute_incoterm"):
-            res = super()._compute_incoterm()
-        for order in self.filtered("type_id"):
-            order_type = order.type_id
-            if order_type.incoterm_id:
-                order.incoterm = order_type.incoterm_id
+        if hasattr(super(SaleOrder, target), "_compute_incoterm"):
+            res = super(SaleOrder, target)._compute_incoterm()
+        for order in target.filtered("type_id"):
+            type_value = order.type_id.incoterm_id
+            order.incoterm = order._sot_resolve(type_value, order.incoterm, "incoterm")
+            order._sot_stamp_cascade_if_available(
+                "incoterm", order.incoterm, type_value
+            )
         return res
 
     @api.depends("type_id")
@@ -179,7 +276,15 @@ class SaleOrder(models.Model):
 
     def _prepare_invoice(self):
         res = super()._prepare_invoice()
-        if self.type_id.journal_id:
+        # Journal:
+        # - `type_first`: legacy — type's journal overrides super's choice.
+        # - `partner_first` / `partner_only`: leave whatever super chose.
+        # We don't use `_sot_resolve` here: super() may leave `journal_id`
+        # implicit (the account.move._get_default_journal logic fills it),
+        # so a three-way merge would spuriously fall back to the type's
+        # journal in non-type_first modes.
+        mode = self.type_id.precedence or "type_first"
+        if mode == "type_first" and self.type_id.journal_id:
             res["journal_id"] = self.type_id.journal_id.id
         if self.type_id:
             res["sale_type_id"] = self.type_id.id
@@ -191,13 +296,42 @@ class SaleOrderLine(models.Model):
 
     route_id = fields.Many2one(compute="_compute_route_id", store=True, readonly=False)
 
+    def _sot_preserve_user_set(self, fname):
+        """Line-level mirror of `SaleOrder._sot_preserve_user_set`."""
+        if not hasattr(self, "_user_set"):
+            return self.browse()
+        return self.filtered(lambda r: r._user_set(fname))
+
+    def _sot_stamp_cascade_if_available(self, fname, value, type_value):
+        """Mirror of `SaleOrder._sot_stamp_cascade_if_available` for line-
+        level fields (route_id). Same soft-dependency on
+        `web_field_provenance` (Huly OCA-23).
+        """
+        if not value or value != type_value:
+            return
+        if not hasattr(self, "_stamp_provenance"):
+            return
+        try:
+            self._stamp_provenance(
+                [fname],
+                source="r",
+                by="sot.cascade",
+                rule="Sale Order Type cascade",
+            )
+        except Exception as exc:
+            _logger.debug("_stamp_provenance failed for %s: %s", fname, exc)
+
     @api.depends("order_id.type_id")
     def _compute_route_id(self):
+        preserved = self._sot_preserve_user_set("route_id")
+        target = self - preserved
         res = None
-        if hasattr(super(), "_compute_route_id"):
-            res = super()._compute_route_id()
-        for line in self.filtered("order_id.type_id"):
-            order_type = line.order_id.type_id
-            if order_type.route_id:
-                line.route_id = order_type.route_id
+        if hasattr(super(SaleOrderLine, target), "_compute_route_id"):
+            res = super(SaleOrderLine, target)._compute_route_id()
+        for line in target.filtered("order_id.type_id"):
+            type_value = line.order_id.type_id.route_id
+            line.route_id = line.order_id._sot_resolve(
+                type_value, line.route_id, "route_id"
+            )
+            line._sot_stamp_cascade_if_available("route_id", line.route_id, type_value)
         return res

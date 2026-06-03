@@ -10,3 +10,7 @@ class ResConfigSettings(models.TransientModel):
         related="company_id.sale_order_type_required",
         readonly=False,
     )
+    sale_order_type_default_precedence = fields.Selection(
+        related="company_id.sale_order_type_default_precedence",
+        readonly=False,
+    )

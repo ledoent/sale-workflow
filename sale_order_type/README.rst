@@ -1,7 +1,3 @@
-.. image:: https://odoo-community.org/readme-banner-image
-   :target: https://odoo-community.org/get-involved?utm_source=readme
-   :alt: Odoo Community Association
-
 ===============
 Sale Order Type
 ===============
@@ -17,7 +13,7 @@ Sale Order Type
 .. |badge1| image:: https://img.shields.io/badge/maturity-Beta-yellow.png
     :target: https://odoo-community.org/page/development-status
     :alt: Beta
-.. |badge2| image:: https://img.shields.io/badge/license-AGPL--3-blue.png
+.. |badge2| image:: https://img.shields.io/badge/licence-AGPL--3-blue.png
     :target: http://www.gnu.org/licenses/agpl-3.0-standalone.html
     :alt: License: AGPL-3
 .. |badge3| image:: https://img.shields.io/badge/github-OCA%2Fsale--workflow-lightgray.png?logo=github
@@ -42,6 +38,64 @@ You can see sale types as lines of business.
 You are able to select a sales order type by partner so that when you
 add a partner to a sales order it will get the related info to it.
 
+Additionally, it adds a warning message to notify users when there is a
+mismatch between the partner's default pricelist and the effective
+pricelist set by the sales order type. The warning text adapts to the
+type's configured precedence mode (see below) so that the user knows
+which value will actually be applied on new sales orders. The warning is
+only visible for companies without a parent and when there is a mismatch
+between the two pricelists.
+
+|Pricelist Conflict Warning Note|
+
+Precedence modes (per sale.order.type)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each ``sale.order.type`` declares how its propagated fields interact
+with the partner's defaults. The setting is exposed in developer mode on
+the type form (Sales > Configuration > Sales Order Types > *type* >
+Precedence) and applies uniformly to the pricelist, payment term,
+warehouse, shipping policy, incoterm, route and invoice journal.
+
+- **Sale type wins** (``type_first``, default): the type's value
+  overrides whatever the partner derives. This is the legacy behavior
+  that has existed in this module since it was first published.
+- **Partner wins; type fills gaps** (``partner_first``): the partner's
+  value is used; the type's value only applies when the partner has no
+  value for that field. Use this for customers who maintain
+  authoritative partner-level defaults and treat sale order types
+  primarily as labeling / reporting / sequence-numbering devices.
+- **Ignore type for propagation** (``partner_only``): the type's
+  pricelist / payment term / warehouse etc. are never pushed onto the
+  sales order. The type record remains useful for grouping, filtering,
+  sequences and the per-type invoice journal logic, but its other fields
+  are decorative. Use this when you want a sale order type purely as a
+  reporting axis.
+
+A company-wide default is configurable in *Settings → Sales* and is
+applied when new types are created. Changing the default does not modify
+existing types; their precedence is preserved.
+
+Manual edits on a sale order are preserved across recomputes by trigger
+narrowing: once a user sets the pricelist (or payment term, etc.)
+directly on a SO, the value will not be overwritten unless ``type_id``
+or ``partner_id`` actually changes. A ``type_id`` change *does* re-fire
+the type's value in ``type_first`` mode — this is the documented legacy
+behavior and matches user expectations for an explicit type change.
+
+For stricter dirty-state preservation (preserve user edits even on a
+type change, with a Salesforce/SAP-style badge to surface "this value is
+anchored by the user"), install the companion module
+``web_field_provenance`` when it's available (see Huly OCA-23 / ledoent
+initiative). This module's ``record._user_set(fname)`` API is consulted
+automatically by ``sale.order._sot_resolve`` — when installed and the
+user has manually set a field, the precedence rules are bypassed and the
+manual value wins regardless of mode. The integration is a soft
+dependency: this module works standalone and behaves identically when
+``web_field_provenance`` is not installed.
+
+.. |Pricelist Conflict Warning Note| image:: https://raw.githubusercontent.com/OCA/sale-workflow/18.0/sale_order_type/static/description/pricelist_conflict_warning_note.png
+
 **Table of contents**
 
 .. contents::
@@ -53,16 +107,39 @@ Configuration
 To configure Sale Order Types you need to:
 
 1. Go to **Sales > Configuration > Sales Orders Types**
-2. Create a new sale order type with all the settings you want
+
+2. Create a new sale order type with all the settings you want.
+
+3. *(Optional, developer mode only)* on each type, set the *Precedence*
+   field to control how its own pricelist / payment term / warehouse /
+   etc. interact with the partner's defaults when a sales order is
+   created:
+
+   - ``Sale type wins`` — legacy behavior; the type overrides whatever
+     the partner derives.
+   - ``Partner wins; type fills gaps`` — the partner's value is used;
+     the type only fills fields the partner leaves empty.
+   - ``Ignore type for propagation`` — the type's fields are never
+     applied to new sales orders; the type acts as a label only.
+
+   The default for newly-created types is set in *Settings > Sales >
+   Quotations & Orders > Default precedence for new Sale Order Types*.
+   Existing types keep their current value when this default changes —
+   upgrading the module preserves legacy behavior (``Sale type wins``)
+   for any type that hasn't been touched.
 
 Usage
 =====
 
 1. Go to **Sales > Sales Orders** and create a new sale order. Select
    the new type you have created before and all settings will be
-   propagated.
+   propagated. How they're propagated depends on the type's *Precedence*
+   setting (see CONFIGURE).
 2. You can also define a type for a particular partner if you go to
    *Sales & Purchases* and set a sale order type.
+3. When the type's precedence differs from the legacy ``Sale type wins``
+   mode, a small caption appears under the SO's pricelist explaining
+   what behavior to expect.
 
 Bug Tracker
 ===========
