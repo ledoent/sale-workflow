@@ -23,7 +23,12 @@ class TestSaleOrderType(BaseCommon):
         cls.account = cls.account_model.create(
             {"code": "income", "name": "Income", "account_type": "income"}
         )
-        cls.partner = cls.env.ref("base.res_partner_1")
+        # Don't rely on the `base.res_partner_1` demo record — it's absent
+        # when --without-demo is set, so setUpClass errors before any
+        # assertion runs. Create the partner explicitly instead.
+        cls.partner = cls.env["res.partner"].create(
+            {"name": "Test Partner", "is_company": True}
+        )
         cls.partner_child_1 = cls.env["res.partner"].create(
             {"name": "Test child", "parent_id": cls.partner.id, "sale_type": False}
         )
@@ -123,10 +128,13 @@ class TestSaleOrderType(BaseCommon):
                         {
                             "name": "SO -> Customer",
                             "action": "pull",
-                            "picking_type_id": cls.env.ref("stock.picking_type_in").id,
-                            "location_src_id": cls.env.ref(
-                                "stock.stock_location_components"
-                            ).id,
+                            "picking_type_id": cls.env["stock.picking.type"]
+                            .search([("code", "=", "incoming")], order="id", limit=1)
+                            .id,
+                            # Use the test company's warehouse stock as the
+                            # source so _check_company on stock.route accepts
+                            # the rule; customer location is shared (no company).
+                            "location_src_id": cls.warehouse.lot_stock_id.id,
                             "location_dest_id": cls.env.ref(
                                 "stock.stock_location_customers"
                             ).id,
@@ -297,6 +305,26 @@ class TestSaleOrderType(BaseCommon):
     def test_res_partner_copy_data(self):
         new_partner = self.partner.copy()
         self.assertEqual(self.partner.sale_type, new_partner.sale_type)
+
+    def test_effective_pricelist_id_with_pricelist(self):
+        """effective_pricelist_id resolves to sale_type.pricelist_id when set."""
+        self.partner.sale_type = self.sale_type
+        self.assertEqual(
+            self.partner.effective_pricelist_id, self.sale_type.pricelist_id
+        )
+
+    def test_effective_pricelist_id_without_pricelist(self):
+        """effective_pricelist_id is empty when sale_type has no pricelist set."""
+        sale_type_no_pricelist = self.sale_type_model.create(
+            {"name": "Type without pricelist"}
+        )
+        self.partner.sale_type = sale_type_no_pricelist
+        self.assertFalse(self.partner.effective_pricelist_id)
+
+    def test_effective_pricelist_id_without_sale_type(self):
+        """effective_pricelist_id is empty when the partner has no sale_type."""
+        self.partner.sale_type = False
+        self.assertFalse(self.partner.effective_pricelist_id)
 
     def test_sale_order_type_required(self):
         sale_form = Form(self.env["sale.order"])
